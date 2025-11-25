@@ -1,0 +1,203 @@
+run_ssgsea_local_dataset <- function(expr_matrix, sigGenes, group_info, dataset_name) {
+  library(GSVA)
+  library(ggplot2)
+  library(dplyr)
+  library(rstatix)
+  library(ggpubr)
+
+  param <- zscoreParam(
+    exprData  = as.matrix(expr_matrix),
+    geneSets  = sigGenes,
+    minSize   = 1,
+    maxSize   = Inf,
+    #alpha     = 0.25,
+    # normalize = TRUE
+  )
+  ssgsea_scores <- gsva(param)
+  
+  ssgsea_df <- data.frame(t(ssgsea_scores))
+  ssgsea_df$Sample <- rownames(ssgsea_df)
+  
+  merged_df <- merge(ssgsea_df, group_info[, c("Sample", "Group")], by = "Sample")
+  
+  merged_df$Group <- factor(merged_df$Group,
+                            levels = c("non_progressors", "progressors"),
+                            labels = c("Non-progressors", "Progressors"))
+  
+  pw <- merged_df %>%
+    pairwise_wilcox_test(MyGenes ~ Group) %>%
+    add_significance("p.adj") %>%
+    add_xy_position(x = "Group", step.increase = 0.08)
+  
+  effsize <- merged_df %>%
+    wilcox_effsize(MyGenes ~ Group)
+  
+  pw$y.position <- pw$y.position + 0.5 
+  print(pw)
+  print("Wilcoxon 效应量（r）:")
+  print(effsize)
+  
+  
+  p <- ggplot(merged_df, aes(x = Group, y = MyGenes, fill = Group)) +
+    geom_violin(trim = TRUE, alpha = 0.8, color = NA, width = 0.4) +
+    geom_jitter(aes(color = Group), width = 0.2, alpha = 0.6, size = 0.8, show.legend = FALSE) +
+    geom_boxplot(width = 0.3, outlier.shape = NA, alpha = 0.9, color = "black") +
+    stat_pvalue_manual(
+      pw,
+      mapping     = aes(x = group1, xend = group2, y = y.position + 0.5, label = p.adj.signif),
+      inherit.aes = FALSE,
+      tip.length  = 0.015,
+      label.size  = 5,
+      size        = 0.5,
+      hide.ns     = TRUE
+    ) +
+
+    scale_fill_manual(values = c("#FFBC80", "#2F8AC4")) +
+    scale_color_manual(values = c("#FFBC80", "#2F8AC4")) +
+
+    labs(
+      x = NULL,
+      y = "Enrichment Z-score"
+    ) +
+    
+    theme_classic(base_size = 14) +
+    theme(
+      axis.title.y     = element_text(face = "bold", size = 14),
+      axis.text.x      = element_text(face = "bold", size = 14, color = "black"),
+      axis.text.y      = element_text(size = 13, color = "black"),
+      plot.title       = element_text(face = "bold", hjust = 0.5, size = 15),
+      legend.position  = "none",
+      axis.line        = element_line(size = 0.5, color = "black")
+    )
+  return(p)  
+}
+
+
+
+plot_gene_expression <- function(expr_t, group_info, target_genes, dataset_name = NULL) {
+  library(dplyr)
+  library(tidyr)
+  library(rstatix)
+  library(ggpubr)
+  library(ggplot2)
+  
+  expr_t <- log2(expr_t + 1)
+  expr_sub <- t(expr_t[target_genes, ])
+  expr_df <- as.data.frame(expr_sub)
+  expr_df$Sample <- rownames(expr_df)
+  
+  #group_info <- group_info[, c("Sample", "Group")]
+  #colnames(group_info)[1] <- "Sample"
+  expr_merged <- merge(expr_df, group_info, by = "Sample")
+  
+  long_df <- expr_merged %>%
+    pivot_longer(cols = all_of(target_genes), names_to = "Gene", values_to = "Expression")
+  
+
+  gene_diff <- long_df %>%
+    group_by(Gene) %>%
+    wilcox_test(Expression ~ Group) %>%
+    add_significance("p") %>%
+    mutate(
+      p = signif(p, 4),
+      p.signif = case_when(
+        p <= 0.0001 ~ "****",
+        p <= 0.001 ~ "***",
+        p <= 0.01 ~ "**",
+        p <= 0.05 ~ "*",
+        TRUE ~ "ns"
+      )
+    )
+  
+  long_df$Group <- factor(long_df$Group, levels = c("non_progressors", "progressors"),
+                          labels = c("Non-progressors", "Progressors"))
+  
+  comparisons <- list(c("Non-progressors", "Progressors"))
+  
+  p <- ggplot(long_df, aes(x = Group, y = Expression, fill = Group)) +
+    geom_violin(trim = TRUE, alpha = 0.8, color = NA) +
+    geom_jitter(aes(color = Group), width = 0.2, alpha = 0.6, size = 0.8, show.legend = FALSE) +
+    geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.9, color = "black") +
+    facet_wrap(~ Gene, scales = "free_y", ncol = 3)+
+    stat_compare_means(
+      comparisons = comparisons,
+      method = "wilcox.test",
+      label = "p.signif",
+      tip.length = 0.01,        
+      bracket.size = 0.6,        
+      size = 4,                  
+      vjust = 0.4,            
+      hide.ns = TRUE           
+    ) +
+    labs(y = "Expression", x = NULL) +
+    scale_fill_manual(values = c("#FFBC80", "#2F8AC4")) +
+    scale_color_manual(values = c("#FFBC80", "#2F8AC4")) +
+    theme_classic(base_size = 13) +
+    theme(
+      strip.background = element_rect(fill = "#f5f5f5", color = "grey80"),
+      strip.text = element_text(face = "bold", size = 12, color = "black"),
+      legend.position = "none",
+      axis.title.y     = element_text(face = "bold", size = 14),
+      axis.text.x      = element_text(face = "bold", size = 14, color = "black"),
+      axis.text.y      = element_text(size = 13, color = "black"),
+      plot.title       = element_text(face = "bold", hjust = 0.5, size = 15),
+      axis.line        = element_line(size = 0.5, color = "black")
+    )
+    p_values <- compare_means(
+      Expression ~ Group,
+      data = long_df,
+      group.by = "Gene",
+      method = "wilcox.test",
+      comparisons = comparisons
+    ) %>%
+      mutate(label = p.signif)
+    
+    p_values <- p_values %>%
+      group_by(Gene) %>%
+      mutate(y.position = max(long_df$Expression[long_df$Gene == unique(Gene)], na.rm = TRUE) * 1.05)
+    p_values <- compare_means(
+      Expression ~ Group,
+      data = long_df,
+      group.by = "Gene",
+      method = "wilcox.test",
+      comparisons = comparisons
+    ) %>%
+      filter(p.signif != "ns") %>%            
+      mutate(label = p.signif) %>%
+      group_by(Gene) %>%
+      mutate(y.position = max(long_df$Expression[long_df$Gene == unique(Gene)], na.rm = TRUE) * 1.05)
+    
+    p <- ggplot(long_df, aes(x = Group, y = Expression, fill = Group)) +
+      geom_violin(trim = TRUE, alpha = 0.8, color = NA) +
+      geom_jitter(aes(color = Group), width = 0.2, alpha = 0.6, size = 0.8, show.legend = FALSE) +
+      geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.9, color = "black") +
+      facet_wrap(~ Gene, scales = "free_y", ncol = 3) +
+      geom_text(data = p_values,
+                aes(x = group1, label = label, y = y.position-0.05),
+                position = position_nudge(x = 0.5),
+                size = 6,
+                inherit.aes = FALSE) +
+      labs(y = "Expression", x = NULL) +
+      scale_fill_manual(values = c("#FFBC80", "#2F8AC4")) +
+      scale_color_manual(values = c("#FFBC80", "#2F8AC4")) +
+      theme_classic(base_size = 13) +
+      theme(
+        strip.background = element_rect(fill = "#f5f5f5", color = "grey80"),
+        strip.text = element_text(face = "bold", size = 12, color = "black"),
+        legend.position = "none",
+        axis.title.y     = element_text(face = "bold", size = 14),
+        axis.text.x      = element_text(face = "bold", size = 14, color = "black"),
+        axis.text.y      = element_text(size = 13, color = "black"),
+        plot.title       = element_text(face = "bold", hjust = 0.5, size = 15),
+        axis.line        = element_line(size = 0.5, color = "black")
+      )
+    
+  return(p)
+}
+
+
+
+
+
+
+
