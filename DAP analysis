@@ -1,161 +1,104 @@
-library("OlinkAnalyze")
+library(OlinkAnalyze)
 library(dplyr)
 library(tidyr)
 library(tibble)
 library(stringr)
 library(ggplot2)
 library(ggrepel)
-library(devtools)
-library("ggvolcano")
-
 
 filtered_proteins <- data %>%
   group_by(Assay) %>%  
   summarise(low_lod_ratio = mean(NPX < MaxLOD, na.rm = TRUE)) %>%  
   filter(low_lod_ratio < 0.3) %>%  
-  pull(Assay)  
+  pull(Assay)
 
-P_vs_NP_results <- olink_wilcox(df = data, variable = 'Group')
+data_filtered <- data %>%
+  filter(Assay %in% filtered_proteins)
 
-dif_data <- P_vs_NP_results %>%
-  mutate(change = case_when(
-    Adjusted_pval <= 0.05 & estimate > 0 ~ "Up",
-    Adjusted_pval <= 0.05 & estimate < 0 ~ "Down",
-    TRUE ~ "No change"
-  )) %>%
-  mutate(Gene_name = Assay) %>%
+P_vs_NP_results <- olink_wilcox(df = data_filtered, variable = "Group")
+
+dif_P_NP <- P_vs_NP_results %>%
+  mutate(
+    change = case_when(
+      Adjusted_pval <= 0.05 & estimate > 0 ~ "Up",
+      Adjusted_pval <= 0.05 & estimate < 0 ~ "Down",
+      TRUE ~ "No change"
+    ),
+    Gene_name = Assay
+  ) %>%
   select(Gene_name, estimate, p.value, Adjusted_pval, change) %>%
   filter(Adjusted_pval != 0)
 
-top_10_name <- P_NP_wilcox_results %>%
-  slice_head(n = 10) %>%
-  pull(OlinkID)
+dif_volcano_P_NP <- dif_P_NP
 
-dif_P_NP <- P_NP_wilcox_results %>%
-  mutate(change = as.factor(
-    ifelse(Adjusted_pval <= 0.05 & estimate > 0, 'Up', 
-           ifelse(Adjusted_pval <= 0.05 & estimate < 0, 'Down', 'No change'))
-  ))
+estimatefilter <- 0
+index <- dif_volcano_P_NP$Adjusted_pval < 0.05 & abs(dif_volcano_P_NP$estimate) > estimatefilter
 
-dif_volcano_P_NP <- dif_P_NP %>%
-  mutate(regulate = change) %>%
-  mutate(Gene_name = Assay)
-
-dif_volcano_P_NP <- dif_volcano_P_NP[, c("Gene_name", "estimate", "p.value", "Adjusted_pval", "regulate")]
-
-top10_genes <- dif_volcano_P_NP %>%
-  arrange(Adjusted_pval) %>%
-  head(10) 
-
-
-estimatefilter = 0 
-index = dif_volcano_P_NP$Adjusted_pval <0.05 & abs(dif_volcano_P_NP$estimate) > estimatefilter
 dif_volcano_P_NP$group <- 0
-dif_volcano_P_NP$group[index & dif_volcano_P_NP$estimate>0] = 1
-dif_volcano_P_NP$group[index & dif_volcano_P_NP$estimate<0] = -1
-dif_volcano_P_NP$group <- factor(dif_volcano_P_NP$group,levels = c(1,0,-1),labels =c("Up","No change","Down") )
-dif_volcano_P_NP <- subset(dif_volcano_P_NP,Adjusted_pval != 0)
+dif_volcano_P_NP$group[index & dif_volcano_P_NP$estimate > 0] <- 1
+dif_volcano_P_NP$group[index & dif_volcano_P_NP$estimate < 0] <- -1
+
+dif_volcano_P_NP$group <- factor(
+  dif_volcano_P_NP$group,
+  levels = c(1, 0, -1),
+  labels = c("Up", "No change", "Down")
+)
+
+dif_volcano_P_NP <- subset(dif_volcano_P_NP, Adjusted_pval != 0)
+
+top10 <- dif_volcano_P_NP %>%
+  drop_na() %>%
+  filter(group != "No change") %>%
+  arrange(Adjusted_pval) %>%
+  slice(1:10)
 
 P_NP_volcano <- ggplot(data = dif_volcano_P_NP) + 
-  geom_point(aes(x = estimate, y = -log10(Adjusted_pval), 
-                 color = group),  
-             size = 3,    
-             show.legend = TRUE) +   
-  geom_point(data = dif_volcano_P_NP %>%
-               tidyr::drop_na() %>%
-               dplyr::filter(group != "NS") %>%
-               dplyr::arrange(desc(-log10(Adjusted_pval))) %>%
-               dplyr::slice(1:10),
-             aes(x = estimate, y = -log10(Adjusted_pval),
-                 size = 3),  
-             shape = 21, show.legend = F, color = "black") +
-  geom_text_repel(data = dif_volcano_P_NP %>% 
-                    tidyr::drop_na() %>% 
-                    dplyr::filter(group != "NS") %>%
-                    dplyr::arrange(desc(-log10(Adjusted_pval))) %>%
-                    dplyr::slice(1:10) %>%
-                    dplyr::filter(group == "Up"),
-                  aes(x = estimate, y = -log10(Adjusted_pval), label = Gene_name),
-                  box.padding = 0.5,
-                  nudge_x = 0.5,
-                  nudge_y = 0.2,
-                  segment.curvature = -0.1,
-                  segment.ncp = 3,
-                  direction = "y", 
-                  hjust = "left") + 
-  geom_text_repel(data = dif_volcano_P_NP %>% 
-                    tidyr::drop_na() %>% 
-                    dplyr::filter(group != "NS") %>%
-                    dplyr::arrange(desc(-log10(Adjusted_pval))) %>%
-                    dplyr::slice(1:10) %>%
-                    dplyr::filter(group == "Down"),
-                  aes(x = estimate, y = -log10(Adjusted_pval), label = Gene_name),
-                  box.padding = 0.8,
-                  nudge_x = -0.05,
-                  nudge_y = 0.1,
-                  segment.curvature = -0.01,
-                  segment.ncp = 1,
-                  segment.angle = 10,
-                  direction = "y", 
-                  hjust = "right") + 
-  scale_color_manual(values = c("Up" = "red", "Down" = "#4DBBD5B2", "No change" = "gray")) + 
+  geom_point(aes(x = estimate, y = -log10(Adjusted_pval), color = group),
+             size = 3, show.legend = TRUE) +
+  geom_point(data = top10,
+             aes(x = estimate, y = -log10(Adjusted_pval)),
+             shape = 21, size = 3, color = "black", show.legend = FALSE) +
+  geom_text_repel(
+    data = top10 %>% filter(group == "Up"),
+    aes(x = estimate, y = -log10(Adjusted_pval), label = Gene_name),
+    box.padding = 0.5,
+    nudge_x = 0.5,
+    nudge_y = 0.2,
+    segment.curvature = -0.1,
+    segment.ncp = 3,
+    direction = "y",
+    hjust = "left"
+  ) +
+  geom_text_repel(
+    data = top10 %>% filter(group == "Down"),
+    aes(x = estimate, y = -log10(Adjusted_pval), label = Gene_name),
+    box.padding = 0.8,
+    nudge_x = -0.05,
+    nudge_y = 0.1,
+    segment.curvature = -0.01,
+    segment.ncp = 1,
+    segment.angle = 10,
+    direction = "y",
+    hjust = "right"
+  ) +
+  scale_color_manual(values = c("Up" = "red",
+                                "Down" = "#4DBBD5B2",
+                                "No change" = "gray")) +
   geom_vline(xintercept = 0, linetype = 2) +
-  geom_hline(yintercept = -log10(0.05), linetype = 4) + 
-  scale_size_continuous(range = c(3, 3)) +  
-  ylim(c(-0.01, max(abs(-log10(dif_volcano_P_NP$Adjusted_pval)))+0.5)) + 
-  theme_bw() + 
-  theme(panel.grid = element_blank(),
-        axis.text = element_text(size = 13, color = "#000000"),
-        axis.title = element_text(size = 15),
-        axis.title.x = element_text(size = 13, face = "bold", color = "black"),
-        axis.title.y = element_text(size = 13, face = "bold", color = "black"),
-        legend.key.size = unit(0.5, "cm"),
-        legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8))  +
-  labs(x = "Estimate")+  
-  coord_cartesian(clip = "off") + 
-  annotation_custom(
-    grob = grid::segmentsGrob(
-      y0 = unit(-1, "pt"),
-      y1 = unit(-1, "pt"),
-      arrow = arrow(angle = 45, length = unit(.1, "cm"), ends = "first"),
-      gp = grid::gpar(lwd = 3, col = "#3288bd")
-    ), 
-    xmin = -c(0.05), 
-    xmax = -0.25,
-    ymin = 2.7,
-    ymax = 2.7
+  geom_hline(yintercept = -log10(0.05), linetype = 4) +
+  ylim(c(
+    -0.01,
+    max(-log10(dif_volcano_P_NP$Adjusted_pval), na.rm = TRUE) + 0.5
+  )) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_text(size = 13, color = "#000000"),
+    axis.title = element_text(size = 15),
+    axis.title.x = element_text(size = 13, face = "bold", color = "black"),
+    axis.title.y = element_text(size = 13, face = "bold", color = "black"),
+    legend.key.size = unit(0.5, "cm"),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 8)
   ) +
-  annotation_custom(
-    grob = grid::textGrob(
-      label = "Down: 71",
-      gp = grid::gpar(col = "#3288bd")
-    ),
-    xmin = -c(0.05), 
-    xmax = -0.25,
-    ymin = 2.9,
-    ymax = 2.9
-  ) +
-  annotation_custom(
-    grob = grid::segmentsGrob(
-      y0 = unit(-1, "pt"),
-      y1 = unit(-1, "pt"),
-      arrow = arrow(angle = 45, length = unit(.2, "cm"), ends = "last"),
-      gp = grid::gpar(lwd = 3, col = "#9e0142")
-    ), 
-    xmin = 0.05, 
-    xmax = 0.25,
-    ymin = 2.7,
-    ymax = 2.7
-  ) +
-  annotation_custom(
-    grob = grid::textGrob(
-      label = "Up: 0",
-      gp = grid::gpar(col = "#9e0142")
-    ),
-    xmin = 0.05, 
-    xmax = 0.25,
-    ymin = 2.9,
-    ymax = 2.9
-  )
-
+  labs(x = "Estimate")
