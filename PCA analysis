@@ -1,0 +1,59 @@
+def PCA_plot_sample_name():
+    import pandas as pd
+    import numpy as np
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Ellipse
+
+    df = pd.read_csv("")
+
+    if 'SampleID' in df.columns:
+        sample_names = df['SampleID'].values
+        df = df.drop(columns=['SampleID'])
+    else:
+        sample_names = df.index.astype(str).values 
+
+    X = df.iloc[:, 1:].values 
+    y = df.iloc[:, 0].values 
+
+    group_labels = {1: 'Healthy controls', 2: 'Non-progressors', 3: 'Progressors'}
+    y_labels = np.array([group_labels[group] for group in y])
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X_scaled)
+    explained_variance = pca.explained_variance_ratio_
+    print(f"Explained variance by the first 2 principal components: {explained_variance}")
+
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap='viridis', edgecolor='k', s=100)
+
+    for i, name in enumerate(sample_names):
+        plt.text(X_pca[i, 0] + 0.05, X_pca[i, 1] + 0.05, name, fontsize=8)
+
+    unique_groups = np.unique(y)
+    for group in unique_groups:
+        group_data = X_pca[y == group]
+        mean = np.mean(group_data, axis=0)
+        cov = np.cov(group_data.T)
+        v, w = np.linalg.eigh(cov)
+        v = 2.5 * np.sqrt(v)
+        angle = np.arctan2(w[1, 0], w[0, 0])
+        ell = Ellipse(mean, width=v[0], height=v[1], angle=np.degrees(angle),
+                      edgecolor='black', facecolor='none', lw=2)
+        plt.gca().add_patch(ell)
+
+    plt.xlabel(f'PC1 ({explained_variance[0]*100:.2f}%)')
+    plt.ylabel(f'PC2 ({explained_variance[1]*100:.2f}%)')
+    handles, _ = scatter.legend_elements()
+    plt.legend(handles, list(group_labels.values()), title="Group", loc='best')
+    plt.grid(True)
+    plt.title("PCA of Olink Expression Data with Sample Labels")
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    PCA_plot_sample_name()
