@@ -17,7 +17,7 @@ filtered_proteins <- data %>%
 
 P_vs_NP_results <- olink_wilcox(df = data, variable = 'Group')
 
-dif_data <- P_vs_NonP_results %>%
+dif_data <- P_vs_NP_results %>%
   mutate(change = case_when(
     Adjusted_pval <= 0.05 & estimate > 0 ~ "Up",
     Adjusted_pval <= 0.05 & estimate < 0 ~ "Down",
