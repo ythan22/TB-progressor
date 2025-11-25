@@ -1,20 +1,23 @@
-box_data <- read.csv("")
+library(ggplot2)
+library(dplyr)
+library(ggsignif)
+library(dunn.test)
+library(patchwork)
+library(scales)
 
-protein_columns <- colnames(box_data)[3:ncol(box_data)]
+box_data <- read.csv("your_file.csv")
 
 box_data$Group <- factor(box_data$Group, 
                          levels = c("HC", "NP", "12m", "6m"))
 
+protein_columns <- colnames(box_data)[3:ncol(box_data)]
 selected_proteins <- c("LRP11", "REG4", "Flt3L", "CCDC80","DPP7","ADA")
-
 protein_columns <- intersect(selected_proteins, protein_columns)
 
 fill_colors <- c("HC" = "#bdbdbd",  
                  "NP" = "#abddff",  
                  "12m" = "#9467bd",  
                  "6m" = "#d62728") 
-
-group_levels <- levels(box_data$Group)
 
 all_plots <- list()
 
@@ -23,13 +26,17 @@ for (protein in protein_columns) {
   
   kruskal_result <- kruskal.test(box_data[[protein]] ~ box_data$Group)
   
-  protein_comparisons <- data.frame(protein = character(),
-                                    comparison = character(),
-                                    adjusted_p_value = numeric(),
-                                    stringsAsFactors = FALSE)
+  protein_comparisons <- data.frame(
+    protein = character(),
+    comparison = character(),
+    adjusted_p_value = numeric(),
+    stringsAsFactors = FALSE
+  )
   
   if (kruskal_result$p.value < 0.05) {
-    dunn_res <- dunn.test(box_data[[protein]], box_data$Group, method = "holm", kw = FALSE, list = TRUE)
+    dunn_res <- dunn.test(box_data[[protein]], box_data$Group,
+                          method = "holm", kw = FALSE, list = TRUE)
+    
     protein_comparisons <- data.frame(
       protein = protein,
       comparison = dunn_res$comparisons,
@@ -38,8 +45,8 @@ for (protein in protein_columns) {
     ) %>%
       mutate(significance = case_when(
         adjusted_p_value < 0.001 ~ "***",
-        adjusted_p_value < 0.01 ~ "**",
-        adjusted_p_value < 0.05 ~ "*",
+        adjusted_p_value < 0.01  ~ "**",
+        adjusted_p_value < 0.05  ~ "*",
         TRUE ~ "ns"
       )) %>%
       filter(significance != "ns")
@@ -47,30 +54,32 @@ for (protein in protein_columns) {
   
   if (nrow(protein_comparisons) == 0) {
     my_comparisons <- list()
-    annotations <- list()
+    annotations   <- character(0)
   } else {
-    my_comparisons <- lapply(strsplit(protein_comparisons$comparison, " - "), as.character)
-    annotations <- protein_comparisons$significance
+    my_comparisons <- strsplit(protein_comparisons$comparison, "-") %>%
+      lapply(trimws)
+    annotations   <- protein_comparisons$significance
   }
   
   y_max <- max(box_data[[protein]], na.rm = TRUE)
-  if (protein == "DPP7") {
-    y_max <- max(box_data[[protein]], na.rm = TRUE)
-    y_positions <- c(y_max * 1.25, y_max * 1.6, y_max * 1.8, y_max * 2.0)  
-  } else {
-    y_max <- max(box_data[[protein]], na.rm = TRUE)
-    y_positions <- seq(y_max * 1.1, by = y_max * 0.05, length.out = length(my_comparisons))
-  }  
+  if (length(my_comparisons) > 0) {
+    if (protein == "DPP7") {
+      y_positions <- seq(y_max * 1.25, by = y_max * 0.15,
+                         length.out = length(my_comparisons))
+    } else {
+      y_positions <- seq(y_max * 1.1, by = y_max * 0.05,
+                         length.out = length(my_comparisons))
+    }
+  }
+  
   p <- ggplot(box_data, aes(x = Group, y = .data[[protein]], fill = Group)) +
     geom_violin(trim = FALSE, color = "black", size = 0.5, alpha = 0.4) +
-    #geom_jitter(width = 0.1, aes(color = Group), size = 3, alpha = 0.8) +
-    geom_boxplot(width = 0.2, outlier.shape = NA, fill = "white", color = "black", alpha = 0.8,
-                 position = position_dodge(width = 0.9)) +
+    geom_boxplot(width = 0.2, outlier.shape = NA, fill = "white",
+                 color = "black", alpha = 0.8) +
     scale_fill_manual(values = fill_colors) +
-    scale_color_manual(values = fill_colors) +
     labs(title = protein, x = "Group", y = "Expression") +
     theme_minimal(base_size = 18) +
-    scale_y_continuous(labels = scales::number_format(accuracy = 1))+ 
+    scale_y_continuous(labels = scales::number_format(accuracy = 1)) + 
     theme(
       legend.position = "none",
       panel.grid = element_blank(),
@@ -82,7 +91,7 @@ for (protein in protein_columns) {
   
   if (length(my_comparisons) > 0) {
     p <- p + 
-      ggsignif::geom_signif(
+      geom_signif(
         comparisons = my_comparisons,
         annotations = annotations,
         textsize = 6,
@@ -95,4 +104,8 @@ for (protein in protein_columns) {
   all_plots[[protein]] <- p
 }
 
-final_plot <- patchwork::wrap_plots(all_plots, ncol = min(6, length(all_plots)))
+if (length(all_plots) == 0) {
+  warning("No plots were generated.")
+} else {
+  final_plot <- wrap_plots(all_plots, ncol = min(6, length(all_plots)))
+}
